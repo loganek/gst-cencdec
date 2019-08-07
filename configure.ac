@@ -13,7 +13,7 @@ AC_INIT(GStreamer cenc element, 0.0.1,,
 AG_GST_INIT
 
 dnl initialize automake
-AM_INIT_AUTOMAKE([-Wno-portability 1.11 no-dist-gzip dist-bzip2 tar-ustar subdir-objects])
+AM_INIT_AUTOMAKE([-Wno-portability 1.14 no-dist-gzip dist-xz tar-ustar subdir-objects])
 
 dnl define PACKAGE_VERSION_* variables
 AS_VERSION
@@ -104,6 +104,7 @@ AG_GST_GLIB_CHECK([$GLIB_REQ])
 
 PKG_CHECK_MODULES([OPENSSL], [ openssl >= 1.0.0g ], [ HAVE_OPENSSL="yes" ], [ HAVE_OPENSSL="no" ])
 
+dnl libxml2
 PKG_CHECK_MODULES(LIBXML2, libxml-2.0 >= 2.8, [HAVE_LIBXML2="yes"], [HAVE_LIBXML2="no"])
 AM_CONDITIONAL(HAVE_LIBXML2, test "x$HAVE_LIBXML2" = "xyes")
 AC_SUBST(LIBXML2_CFLAGS)
@@ -159,6 +160,7 @@ AC_CONFIG_FILES(
 Makefile
 gst-libs/Makefile
 gst-libs/gst/Makefile
+gst-libs/gst/drm/Makefile
 src/Makefile
 common/Makefile
 common/m4/Makefile

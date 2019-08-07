@@ -9,6 +9,7 @@ GST_PLUGINS_BASE_GST_INCLUDE = -I$(GST_PLUGINS_BASE_GST_LIBS)
 
 # sources used to compile this plugin
 libgstcencdec_la_SOURCES = \
+  gstdrm_stub.c \
   gstcencdec.c \
   gstcencelements.c 
 
@@ -28,7 +29,8 @@ libgstcencdec_la_CFLAGS = \
 #  -no-undefined
 
 libgstcencdec_la_LIBADD = \
-  $(top_builddir)/gst-libs/gst/libgstaesctr-@GST_API_VERSION@.la \
+  $(top_builddir)/gst-libs/gst/drm/libgstaesctr-@GST_API_VERSION@.la \
+  $(top_builddir)/gst-libs/gst/drm/libgstcencdrm-@GST_API_VERSION@.la \
   $(GST_PLUGINS_BASE_LIBS) \
   $(GST_BASE_LIBS) \
   $(GST_LIBS) \
