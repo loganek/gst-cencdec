@@ -19,10 +19,12 @@
 
 #include <gst/drm/gstcencdrm.h>
 
+#include <json-glib/json-glib.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
+#include <curl/curl.h>
 
 #include <stdio.h>
 
@@ -46,7 +48,16 @@ typedef struct _GstCencDRMStub
   GstCencDRM parent;
 
   GPtrArray *keys;              /* array of GstCencKeyPair objects */
+  gchar *la_url;
 } GstCencDRMStub;
+
+typedef struct _StubHttpPost
+{
+  guint8 *payload;
+  guint payload_size;
+  guint payload_rpos;
+  GByteArray *response;
+} StubHttpPost;
 
 enum
 {
@@ -90,10 +101,16 @@ static void gst_cenc_drm_stub_keypair_dispose (GstCencDRM * self,
     GstCencKeyPair * key_pair);
 static StubKeyPair *gst_cenc_drm_stub_lookup_key (GstCencDRMStub * self,
     GstBuffer * kid);
+static GstCencDrmStatus gst_cenc_drm_stub_add_base64url_key (GstCencDRMStub *,
+    const gchar * b64kid, const gchar * b64key);
 static GstCencDrmStatus gst_cenc_drm_stub_fetch_key (GstCencDRMStub * self,
     StubKeyPair * key_pair);
+static GstCencDrmStatus gst_cenc_drm_stub_fetch_key_from_file (GstCencDRMStub *
+    self, StubKeyPair * kp);
+static GstCencDrmStatus gst_cenc_drm_stub_fetch_key_from_url (GstCencDRMStub *
+    self, StubKeyPair * kp);
 static GstBuffer
-    * gst_cenc_drm_stub_key_id_from_marlin_content_id (GstCencDRMStub * self,
+    *gst_cenc_drm_stub_key_id_from_marlin_content_id (GstCencDRMStub * self,
     GstBuffer * content_id);
 static gchar *gst_cenc_drm_stub_create_content_id (GstCencDRMStub * self,
     GstBuffer * kid);
@@ -134,6 +151,7 @@ gst_cenc_drm_stub_class_init (GstCencDRMStubClass * klass)
 static void
 gst_cenc_drm_stub_init (GstCencDRMStub * self)
 {
+  self->la_url = NULL;
   self->keys = g_ptr_array_new_with_free_func ((GDestroyNotify)
       gst_cenc_drm_keypair_unref);
 }
@@ -147,7 +165,8 @@ gst_cenc_drm_stub_dispose (GObject * obj)
     g_ptr_array_unref (self->keys);
     self->keys = NULL;
   }
-
+  g_free (self->la_url);
+  self->la_url = NULL;
   G_OBJECT_CLASS (parent_class)->dispose (obj);
 }
 
@@ -376,9 +395,19 @@ gst_cenc_drm_stub_key_id_from_marlin_content_id (GstCencDRMStub * self,
 static GstCencDrmStatus
 gst_cenc_drm_stub_fetch_key (GstCencDRMStub * self, StubKeyPair * kp)
 {
+  if (GST_CENC_DRM (self)->drm_type == GST_DRM_CLEARKEY) {
+    return gst_cenc_drm_stub_fetch_key_from_url (self, kp);
+  }
+  return gst_cenc_drm_stub_fetch_key_from_file (self, kp);
+}
+
+static GstCencDrmStatus
+gst_cenc_drm_stub_fetch_key_from_file (GstCencDRMStub * self, StubKeyPair * kp)
+{
   guint8 *key = NULL;
   size_t bytes_read = 0;
   FILE *key_file = NULL;
+
 
   GST_DEBUG_OBJECT (self, "Opening file: %s", kp->filename);
   key_file = fopen (kp->filename, "rb");
@@ -436,6 +465,33 @@ gst_cenc_drm_stub_write_callback (char *ptr, size_t size, size_t nmemb,
 }
 
 static GstCencDrmStatus
+gst_cenc_drm_stub_add_base64url_key (GstCencDRMStub * self,
+    const gchar * b64kid, const gchar * b64key)
+{
+  GstCencDRM *parent = GST_CENC_DRM (self);
+  GstBuffer *buf;
+  StubKeyPair *pair;
+  GBytes *kid, *key;
+
+  GST_DEBUG_OBJECT (self, "KID: %s, Key: %s", b64kid, b64key);
+  kid = gst_cenc_drm_base64url_decode (parent, b64kid);
+  key = gst_cenc_drm_base64url_decode (parent, b64key);
+  buf = gst_buffer_new_wrapped_bytes (kid);
+  pair = gst_cenc_drm_stub_lookup_key (self, buf);
+  gst_buffer_unref (buf);
+  if (pair) {
+    if (pair->parent.key) {
+      g_bytes_unref (pair->parent.key);
+    }
+    pair->parent.key = g_bytes_ref (key);
+    gst_cenc_drm_keypair_unref ((GstCencKeyPair *) pair);
+  }
+  g_bytes_unref (kid);
+  g_bytes_unref (key);
+  return GST_DRM_OK;
+}
+
+static GstCencDrmStatus
 gst_cenc_drm_stub_parse_clearkey_json (GstCencDRMStub * self, GBytes * bytes)
 {
   GstCencDRM *parent = GST_CENC_DRM (self);
@@ -470,9 +526,6 @@ gst_cenc_drm_stub_parse_clearkey_json (GstCencDRMStub * self, GBytes * bytes)
   GST_DEBUG_OBJECT (self, "Response contains %d keys", num_keys);
   for (i = 0; i < num_keys; i++) {
     const gchar *b64key, *b64kid;
-    GBytes *kid, *key;
-    StubKeyPair *pair;
-    GstBuffer *buf;
 
     json_reader_read_element (reader, i);
     json_reader_read_member (reader, "k");
@@ -482,21 +535,7 @@ gst_cenc_drm_stub_parse_clearkey_json (GstCencDRMStub * self, GBytes * bytes)
     b64kid = json_reader_get_string_value (reader);
     json_reader_end_element (reader);   /*  "kid" */
     json_reader_end_element (reader);   /* array index */
-    GST_DEBUG_OBJECT (self, "KID: %s, Key: %s", b64kid, b64key);
-    kid = gst_cenc_drm_base64url_decode (parent, b64kid);
-    key = gst_cenc_drm_base64url_decode (parent, b64key);
-    buf = gst_buffer_new_wrapped_bytes (kid);
-    pair = gst_cenc_drm_stub_lookup_key (self, buf);
-    gst_buffer_unref (buf);
-    if (pair) {
-      if (pair->parent.key) {
-        g_bytes_unref (pair->parent.key);
-      }
-      pair->parent.key = g_bytes_ref (key);
-      gst_cenc_drm_keypair_unref ((GstCencKeyPair *) pair);
-    }
-    g_bytes_unref (kid);
-    g_bytes_unref (key);
+    gst_cenc_drm_stub_add_base64url_key (self, b64kid, b64key);
   }
   json_reader_end_element (reader);     /*  "keys" */
 quit:
@@ -722,11 +761,22 @@ gst_cenc_drm_stub_process_playready_pro_element (GstCencDRMStub * self,
   return GST_DRM_ERROR_NOT_IMPLEMENTED;
 }
 
+/* @data will contain the license URL */
 static GstCencDrmStatus
 gst_cenc_drm_stub_process_clearkey_laurl_element (GstCencDRMStub * self,
     GstBuffer * data)
 {
-  return GST_DRM_ERROR_NOT_IMPLEMENTED;
+  GstMapInfo map;
+
+  if (!gst_buffer_map (data, &map, GST_MAP_READ)) {
+    GST_ERROR_OBJECT (self, "Failed to map Laurl element");
+    return GST_DRM_ERROR_OTHER;
+  }
+  if (self->la_url == NULL) {
+    self->la_url = g_strdup (map.data);
+  }
+  gst_buffer_unmap (data, &map);
+  return GST_DRM_OK;
 }
 
 static GstCencDrmStatus

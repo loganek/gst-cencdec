@@ -438,6 +438,74 @@ gst_cenc_drm_base64_decode (GstCencDRM * self, const gchar * encoded)
   return g_bytes_new_take (decoded, decoded_len);
 }
 
+/**
+ * gst_cenc_drm_base64url_encode:
+ * @data the data to encode
+ *
+ * Returns: a base64url encoded string
+ */
+gchar *
+gst_cenc_drm_base64url_encode (GstCencDRM * self, GBytes * bytes)
+{
+  guint j, blen;
+  gchar *encoded;
+  const guint8 *data;
+  gsize data_size;
+
+  data = g_bytes_get_data (bytes, &data_size);
+  if (!data || data_size == 0) {
+    return NULL;
+  }
+  encoded = g_base64_encode (data, data_size);
+  blen = strlen (encoded);
+  for (j = 0; j < blen; ++j) {
+    if (encoded[j] == '+') {
+      encoded[j] = '-';
+    } else if (encoded[j] == '/') {
+      encoded[j] = '_';
+    } else if (encoded[j] == '=') {
+      encoded[j] = '\0';
+    }
+  }
+  return encoded;
+}
+
+GBytes *
+gst_cenc_drm_base64url_decode (GstCencDRM * self, const gchar * data)
+{
+  gchar *tmp;
+  guchar *decoded;
+  gsize decoded_len = 0;
+  guint data_size;
+  guint padding;
+  guint i;
+
+  data_size = strlen (data);
+  tmp = g_malloc (data_size + 3);
+  memcpy (tmp, data, data_size + 1);
+  for (i = 0; i < data_size; ++i) {
+    if (tmp[i] == '-') {
+      tmp[i] = '+';
+    } else if (tmp[i] == '_') {
+      tmp[i] = '/';
+    }
+  }
+  padding = data_size % 4;
+  if (padding == 2) {
+    tmp[data_size] = '=';
+    tmp[data_size + 1] = '=';
+    tmp[data_size + 2] = '\0';
+  } else if (padding == 3) {
+    tmp[data_size] = '=';
+    tmp[data_size + 1] = '\0';
+  }
+  /* tmp is now a valid base64 string */
+  g_base64_decode_inplace (tmp, &decoded_len);
+  GST_DEBUG_OBJECT (self, "Decoded base64url to %lu bytes", decoded_len);
+  return g_bytes_new_take (tmp, decoded_len);
+}
+
+
 GstBuffer *
 gst_cenc_drm_urn_string_to_raw (GstCencDRM * self, const gchar * urn)
 {

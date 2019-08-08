@@ -110,6 +110,36 @@ AM_CONDITIONAL(HAVE_LIBXML2, test "x$HAVE_LIBXML2" = "xyes")
 AC_SUBST(LIBXML2_CFLAGS)
 AC_SUBST(LIBXML2_LIBS)
 
+
+dnl *** Curl ***
+
+  PKG_CHECK_MODULES(CURL, libcurl >= 7.35.0, [
+    HAVE_CURL="yes"
+    AC_CHECK_HEADERS([unistd.h sys/socket.h sys/types.h netinet/in.h netinet/tcp.h fcntl.h], [ ], [
+      AC_CHECK_HEADERS([unistd.h sys/types.h winsock2.h ws2tcpip.h fcntl.h], [ ], [HAVE_CURL="no"])
+    ])
+    AC_CHECK_HEADERS([netinet/ip.h], [], [HAVE_CURL="no"],
+    [[#ifdef HAVE_SYS_TYPES_H
+     # include <sys/types.h>
+     #endif
+     #ifdef HAVE_NETINET_IN_H
+     # include <netinet/in.h>
+     #endif
+    ]])
+    AC_MSG_CHECKING([needed by gstdrm_stub])
+    AC_MSG_RESULT($HAVE_CURL)
+  ], [
+    HAVE_CURL="no"
+  ])
+  AM_CONDITIONAL(HAVE_CURL, test "x$HAVE_CURL" = "xyes")
+  AC_SUBST(CURL_CFLAGS)
+  AC_SUBST(CURL_LIBS)
+
+dnl json-glib
+PKG_CHECK_MODULES(JSON_GLIB, json-glib-1.0)
+AC_SUBST(JSON_GLIB_LIBS)
+AC_SUBST(JSON_GLIB_CFLAGS)
+
 dnl checks for gstreamer
 dnl uninstalled is selected preferentially -- see pkg-config(1)
 AG_GST_CHECK_GST($GST_API_VERSION, [$GST_REQ], yes)

@@ -18,6 +18,8 @@ libgstcencdec_la_CFLAGS = \
  -I$(top_srcdir)/gst-libs \
   $(OPENSSL_CFLAGS) \
   $(LIBXML2_CFLAGS) \
+  $(CURL_CFLAGS) \
+  $(JSON_GLIB_CFLAGS) \
   $(GST_CFLAGS) \
   $(GST_BASE_CFLAGS) \
   $(GST_PLUGINS_BASE_CFLAGS) \
@@ -34,6 +36,8 @@ libgstcencdec_la_LIBADD = \
   $(GST_PLUGINS_BASE_LIBS) \
   $(GST_BASE_LIBS) \
   $(GST_LIBS) \
+  $(CURL_LIBS) \
+  $(JSON_GLIB_LIBS) \
   $(LIBXML2_LIBS) \
   $(OPENSSL_LIBS)
 

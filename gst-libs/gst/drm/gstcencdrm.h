@@ -204,5 +204,9 @@ GstBuffer* gst_cenc_drm_urn_string_to_raw(GstCencDRM * self, const gchar *urn);
 
 GBytes *gst_cenc_drm_base64_decode (GstCencDRM * self, const gchar * encoded);
 
+gchar* gst_cenc_drm_base64url_encode (GstCencDRM * self, GBytes * data);
+
+GBytes* gst_cenc_drm_base64url_decode (GstCencDRM * self, const gchar * data);
+
 G_END_DECLS
 #endif /* __GST_CENC_DRM_H__ */
