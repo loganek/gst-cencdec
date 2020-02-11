@@ -1,0 +1,13 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@/gstreamer-@GST_API_VERSION@
+pluginsdir=@libdir@/gstreamer-@GST_API_VERSION@
+
+Name: GStreamer DASH CENC DRM library
+Description: DASH CENC DRM library for GStreamer elements
+Version: @VERSION@
+Requires: gstreamer-@GST_API_VERSION@ gstreamer-base-@GST_API_VERSION@
+
+Libs: -L${libdir} -lgstcencdrm-@GST_API_VERSION@
+Cflags: -I${includedir}

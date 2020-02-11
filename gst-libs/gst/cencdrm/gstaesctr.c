@@ -41,7 +41,6 @@ AesCtrState *
 gst_aes_ctr_decrypt_new (GBytes * key, GBytes * iv)
 {
   unsigned char *buf;
-  GstMapInfo map;
   gsize iv_length;
   AesCtrState *state;
 

@@ -28,7 +28,7 @@ static gboolean
 plugin_init (GstPlugin * plugin)
 {
   return gst_element_register (plugin, "cencdec", GST_RANK_PRIMARY,
-      GST_TYPE_CENC_DECRYPT);
+      gst_cenc_decrypt_get_type ());
 }
 
 GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,

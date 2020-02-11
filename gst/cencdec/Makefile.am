@@ -11,7 +11,7 @@ GST_PLUGINS_BASE_GST_INCLUDE = -I$(GST_PLUGINS_BASE_GST_LIBS)
 libgstcencdec_la_SOURCES = \
   gstdrm_stub.c \
   gstcencdec.c \
-  gstcencelements.c 
+  gstplugin.c 
 
 libgstcencdec_la_CFLAGS = \
  -I$(top_srcdir)/common \

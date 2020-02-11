@@ -1,4 +1,4 @@
-/* 
+/*
  * Copyright (c) <2019> Alex Ashley <alex@digital-video.org.uk>
  *
  * This library is free software; you can redistribute it and/or
@@ -20,11 +20,27 @@
 #ifndef __GST_CENC_DRM_STUB_H__
 #define __GST_CENC_DRM_STUB_H__
 
-#include <gst/drm/gstcencdrm.h>
+#include <gst/cencdrm/gstcencdrm.h>
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifndef GST_CENCDRMSTUB_API
+# if defined(BUILDING_GST_CENCDRM) || defined(BUILDING_GST_CENCDEC)
+#  define GST_CENCDRMSTUB_API GST_API_EXPORT         /* from config.h */
+# else
+#  define GST_CENCDRMSTUB_API GST_API_IMPORT
+# endif
+#endif
 
 G_BEGIN_DECLS
 
+GST_CENCDRMSTUB_API
 GstCencDRM* gst_cenc_drm_stub_factory(GstEvent *protection_event);
+
+GST_CENCDRMSTUB_API
+GType gst_cenc_drm_stub_get_type (void);
 
 G_END_DECLS
 #endif /* __GST_CENC_DRM_STUB_H__ */

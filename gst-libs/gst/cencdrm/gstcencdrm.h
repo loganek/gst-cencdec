@@ -1,4 +1,4 @@
-/* 
+/*
  * A base class for content protection (DRM) implementations
  * that can be used by the cencdec element.
  *
@@ -24,7 +24,19 @@
 #define __GST_CENC_DRM_H__
 
 #include <gst/gst.h>
-#include <gst/drm/gstaesctr.h>
+#include <gst/cencdrm/gstaesctr.h>
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifndef GST_CENCDRM_API
+# ifdef BUILDING_GST_CENCDRM
+#  define GST_CENCDRM_API GST_API_EXPORT         /* from config.h */
+# else
+#  define GST_CENCDRM_API GST_API_IMPORT
+# endif
+#endif
 
 G_BEGIN_DECLS
 #define KID_LENGTH 16
@@ -131,6 +143,7 @@ typedef struct _GstCencDRMClass
    * GST_DRM_IDENTIFIER_PSSH_PAYLOAD if the data has some from a PSSH
    * box.
    * @data: DRM specific data
+   * @default_kid: (allow none) the default KID, if known
    *
    * This function is used to provide DRM specific information that has
    * been extracted from the stream to be passed to the DRM instance.
@@ -151,7 +164,7 @@ typedef struct _GstCencDRMClass
    * Returns: status of processing KID
    */
   GstCencDrmStatus (*add_kid)(GstCencDRM *, GstBuffer * kid);
-  
+
   /**
    * create_decrypt:
    * @drm: #GstCencDRM
@@ -176,14 +189,16 @@ struct _GstCencDRM
 
   GstCencDrmType drm_type;
   GstBuffer *system_id;
+  gchar * default_kid;
 };
 
+GST_CENCDRM_API
 GType gst_cenc_drm_get_type (void);
 
 /**
  * gst_cenc_drm_factory:
  * @protection_event: a #GST_EVENT_PROTECTION event.
- * 
+ *
  * Creates new #GstCencDRM object that supports
  * the DRM system specified by the content protection event.
  *
@@ -192,21 +207,33 @@ GType gst_cenc_drm_get_type (void);
  */
 typedef GstCencDRM *(*gst_cenc_drm_factory) (GstEvent * protection_event);
 
+GST_CENCDRM_API
 GstCencDrmStatus gst_cenc_drm_process_content_protection_event (GstCencDRM *,
     GstEvent * event);
+
+GST_CENCDRM_API
 GstCencDrmStatus gst_cenc_drm_parse_pssh_box (GstCencDRM *, GstBuffer * pssh);
 
+GST_CENCDRM_API
 GstCencKeyPair *gst_cenc_drm_keypair_ref (GstCencKeyPair *);
 
+GST_CENCDRM_API
 void gst_cenc_drm_keypair_unref (GstCencKeyPair *);
 
+GST_CENCDRM_API
 GstBuffer* gst_cenc_drm_urn_string_to_raw(GstCencDRM * self, const gchar *urn);
 
-GBytes *gst_cenc_drm_base64_decode (GstCencDRM * self, const gchar * encoded);
+GST_CENCDRM_API
+GBytes * gst_cenc_drm_hex_decode (GstCencDRM * self, const gchar * encoded);
 
-gchar* gst_cenc_drm_base64url_encode (GstCencDRM * self, GBytes * data);
+GST_CENCDRM_API
+GBytes * gst_cenc_drm_base64_decode (GstCencDRM * self, const gchar * encoded);
 
-GBytes* gst_cenc_drm_base64url_decode (GstCencDRM * self, const gchar * data);
+GST_CENCDRM_API
+gchar * gst_cenc_drm_base64url_encode (GstCencDRM * self, GBytes * data);
+
+GST_CENCDRM_API
+GBytes * gst_cenc_drm_base64url_decode (GstCencDRM * self, const gchar * data);
 
 G_END_DECLS
 #endif /* __GST_CENC_DRM_H__ */

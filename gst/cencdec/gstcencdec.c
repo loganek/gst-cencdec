@@ -37,8 +37,8 @@
 #include <gst/base/gstbasetransform.h>
 #include <gst/base/gstbytereader.h>
 #include <gst/gstprotection.h>
-#include <gst/drm/gstaesctr.h>
-#include <gst/drm/gstcencdrm.h>
+#include <gst/cencdrm/gstaesctr.h>
+#include <gst/cencdrm/gstcencdrm.h>
 
 #include <glib.h>
 
@@ -73,10 +73,7 @@ static GstCaps *gst_cenc_decrypt_transform_caps (GstBaseTransform * base,
 
 static GstFlowReturn gst_cenc_decrypt_transform_ip (GstBaseTransform * trans,
     GstBuffer * buf);
-/*static const GstCencKeyPair* gst_cenc_decrypt_lookup_key (GstCencDecrypt * self,
-  GstBuffer * kid);*/
-static GstCencKeyPair *gst_cenc_decrypt_get_key (GstCencDecrypt * self,
-    GstBuffer * kid);
+
 static gboolean gst_cenc_decrypt_sink_event_handler (GstBaseTransform * trans,
     GstEvent * event);
 
@@ -308,15 +305,15 @@ gst_cenc_decrypt_transform_caps (GstBaseTransform * base,
       }
       gst_cenc_decrypt_append_if_not_duplicate (res, out);
     } else {                    /* GST_PAD_SRC */
-      gint n_fields;
+      /*gint n_fields;*/
       GstStructure *tmp = NULL;
       guint p;
       tmp = gst_structure_copy (in);
       gst_cenc_remove_codec_fields (tmp);
       for (p = 0; gst_cenc_decrypt_protection_ids[p]; ++p) {
-        /* filter out the audio/video related fields from the down-stream 
-           caps, because they are not relevant to the input caps of this 
-           element and they can cause caps negotiation failures with 
+        /* filter out the audio/video related fields from the down-stream
+           caps, because they are not relevant to the input caps of this
+           element and they can cause caps negotiation failures with
            adaptive bitrate streams */
         out = gst_structure_copy (tmp);
         gst_structure_set (out,
@@ -356,7 +353,6 @@ gst_cenc_decrypt_transform_ip (GstBaseTransform * base, GstBuffer * buf)
   GstCencDecrypt *self = GST_CENC_DECRYPT (base);
   GstFlowReturn ret = GST_FLOW_OK;
   GstMapInfo map, iv_map;
-  const GstCencKeyPair *keypair;
   const GstProtectionMeta *prot_meta = NULL;
   guint pos = 0;
   gint sample_index = 0;
@@ -462,7 +458,6 @@ gst_cenc_decrypt_transform_ip (GstBaseTransform * base, GstBuffer * buf)
       iv_bytes);
 
   if (!state) {
-    gsize sz;
     GST_ERROR_OBJECT (self, "Failed to create AES cipher for key");
     ret = GST_FLOW_NOT_SUPPORTED;
     goto release;

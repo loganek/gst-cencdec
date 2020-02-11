@@ -17,7 +17,8 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include <gst/drm/gstcencdrm.h>
+#include <gst/base/gstbytereader.h>
+#include <gst/cencdrm/gstcencdrm.h>
 
 #include <json-glib/json-glib.h>
 #include <openssl/evp.h>
@@ -27,6 +28,8 @@
 #include <curl/curl.h>
 
 #include <stdio.h>
+
+#include "gstdrm_stub.h"
 
 GST_DEBUG_CATEGORY_EXTERN (gst_cenc_decrypt_debug_category);
 #define GST_CAT_DEFAULT gst_cenc_decrypt_debug_category
@@ -236,6 +239,7 @@ gst_cenc_drm_stub_should_process_node (GstCencDRM * drm,
     *identifier = DRM_STUB_CLEARKEY_LAURL;
     return GST_DRM_PROCESS_RAW;
   }
+  return GST_DRM_SKIP;
 }
 
 static GstCencDrmStatus
@@ -335,7 +339,7 @@ gst_cenc_drm_stub_create_content_id (GstCencDRMStub * self, GstBuffer * kid)
   const guint8 *id;
   const gsize id_string_length = 48;    /* Length of Content ID string */
   gchar *id_string = g_malloc0 (id_string_length);
-  gchar *prefix = parent->drm_type == GST_DRM_MARLIN ? "urn:marlin:kid:" : "";
+  const gchar *prefix = (parent->drm_type == GST_DRM_MARLIN) ? "urn:marlin:kid:" : "";
 
   gst_buffer_map (kid, &map, GST_MAP_READ);
   id = map.data;
@@ -361,22 +365,21 @@ gst_cenc_drm_stub_key_id_from_marlin_content_id (GstCencDRMStub * self,
   gboolean failed = FALSE;
   guint i, pos;
   GstMapInfo content_id;
-  gsize length;
 
   if (!gst_buffer_map (buf, &content_id, GST_MAP_READ)) {
     GST_WARNING_OBJECT (self, "Failed to map content ID buffer");
     return NULL;
   }
   if (content_id.size <= sizeof (prefix) ||
-      !g_str_has_prefix (content_id.data, prefix)) {
+      !g_str_has_prefix ((const gchar *)content_id.data, prefix)) {
     gst_buffer_unmap (buf, &content_id);
     return NULL;
   }
   kid = gst_buffer_new_allocate (NULL, KID_LENGTH, NULL);
   gst_buffer_map (kid, &map, GST_MAP_READWRITE);
-  for (i = 0, pos = sizeof (prefix); i < KID_LENGTH && pos < length; ++i) {
+  for (i = 0, pos = sizeof (prefix); i < KID_LENGTH && pos < content_id.size; ++i) {
     guint b;
-    if (!sscanf (&content_id.data[pos], "%02x", &b)) {
+    if (!sscanf ((const char *) &content_id.data[pos], "%02x", &b)) {
       failed = TRUE;
       break;
     }
@@ -460,7 +463,7 @@ gst_cenc_drm_stub_write_callback (char *ptr, size_t size, size_t nmemb,
   if (post->response == NULL) {
     post->response = g_byte_array_new ();
   }
-  post->response = g_byte_array_append (post->response, ptr, len);
+  post->response = g_byte_array_append (post->response, (const guint8 *)ptr, len);
   return len;
 }
 
@@ -494,7 +497,7 @@ gst_cenc_drm_stub_add_base64url_key (GstCencDRMStub * self,
 static GstCencDrmStatus
 gst_cenc_drm_stub_parse_clearkey_json (GstCencDRMStub * self, GBytes * bytes)
 {
-  GstCencDRM *parent = GST_CENC_DRM (self);
+  /*  GstCencDRM *parent = GST_CENC_DRM (self);*/
   GstCencDrmStatus rv = GST_DRM_OK;
   JsonParser *parser = NULL;
   JsonReader *reader = NULL;
@@ -507,7 +510,7 @@ gst_cenc_drm_stub_parse_clearkey_json (GstCencDRMStub * self, GBytes * bytes)
   GST_DEBUG_OBJECT (self, "Response: %s", data);
 
   parser = json_parser_new ();
-  if (!json_parser_load_from_data (parser, data, data_size, NULL)) {
+  if (!json_parser_load_from_data (parser, (const gchar *) data, data_size, NULL)) {
     GST_ERROR_OBJECT (self, "Failed to parse JSON response");
     rv = GST_DRM_ERROR_SERVER_RESPONSE;
     goto quit;
@@ -589,9 +592,9 @@ gst_cenc_drm_stub_fetch_key_from_url (GstCencDRMStub * self, StubKeyPair * kp)
     goto quit;
   }
   request = g_string_append (request, "],\"type\":\"temporary\"}");
-  post.payload = g_string_free (request, FALSE);
+  post.payload = (guint8 *) g_string_free (request, FALSE);
   request = NULL;
-  post.payload_size = strlen (post.payload);
+  post.payload_size = (guint) strlen ((const gchar *)post.payload);
   post.payload_rpos = 0;
   post.response = NULL;
 
@@ -650,9 +653,7 @@ quit:
 static StubKeyPair *
 gst_cenc_drm_stub_lookup_key (GstCencDRMStub * self, GstBuffer * kid)
 {
-  GstMapInfo info;
   guint i;
-  gsize sz;
 
   for (i = 0; i < self->keys->len; ++i) {
     StubKeyPair *k;
@@ -754,11 +755,53 @@ gst_cenc_drm_stub_process_playready_pssh_element (GstCencDRMStub * self,
   return gst_cenc_drm_parse_pssh_box (GST_CENC_DRM (self), data);
 }
 
+#define PRO_CHECK(a) {if (!(a)) { goto quit; } }
+
+/* See https://docs.microsoft.com/en-us/playready/specifications/playready-header-specification */
 static GstCencDrmStatus
 gst_cenc_drm_stub_process_playready_pro_element (GstCencDRMStub * self,
     GstBuffer * data)
 {
-  return GST_DRM_ERROR_NOT_IMPLEMENTED;
+  GstMapInfo map;
+  GstByteReader br;
+  guint32 pro_length;
+  guint16 i, num_records;
+
+  gst_buffer_map (data, &map, GST_MAP_READ);
+  gst_byte_reader_init (&br, map.data, map.size);
+  PRO_CHECK (gst_byte_reader_get_uint32_le (&br, &pro_length));
+  if (pro_length != map.size) {
+    GST_ERROR_OBJECT(self, "Invalid mspr:pro size %u, expected %lu",
+                     pro_length, map.size);
+    goto quit;
+  }
+  PRO_CHECK (gst_byte_reader_get_uint16_le (&br, &num_records));
+  GST_DEBUG_OBJECT(self, "Found %d PlayReady records", num_records);
+  for (i=0; i<num_records; ++i) {
+    guint16 record_type, record_length;
+    const guint8 *record_value = NULL;
+    PRO_CHECK (gst_byte_reader_get_uint16_le (&br, &record_type));
+    PRO_CHECK (gst_byte_reader_get_uint16_le (&br, &record_length));
+    GST_DEBUG_OBJECT(self,"Record 0x%04x length %d", record_type, record_length);
+    if (record_length>0) {
+      PRO_CHECK (gst_byte_reader_get_data(&br, record_length, &record_value));
+    }
+    if (record_type==1) {
+      gchar *xml;
+      xml = g_utf16_to_utf8 ((const gunichar2 *)record_value, record_length, NULL, NULL, NULL);
+      GST_DEBUG_OBJECT(self, "%02x %02x PRO=%s", (guint8)xml[0], (guint8)xml[1],
+                       (const gchar*)xml);
+      g_free (xml);
+    }
+  }
+ quit:
+  gst_buffer_unmap (data, &map);
+
+  /*  gst_cenc_drm_stub_add_base64url_key (self, "nrQFDeRLSAKTLifXUIPiZg",
+      "FmY0xnWCPCNaSpRG-tUuTQ");*/
+
+  return GST_DRM_OK;
+  /*  return GST_DRM_ERROR_NOT_IMPLEMENTED; */
 }
 
 /* @data will contain the license URL */
@@ -773,7 +816,7 @@ gst_cenc_drm_stub_process_clearkey_laurl_element (GstCencDRMStub * self,
     return GST_DRM_ERROR_OTHER;
   }
   if (self->la_url == NULL) {
-    self->la_url = g_strdup (map.data);
+    self->la_url = g_strdup ((gchar *) map.data);
   }
   gst_buffer_unmap (data, &map);
   return GST_DRM_OK;
@@ -782,5 +825,8 @@ gst_cenc_drm_stub_process_clearkey_laurl_element (GstCencDRMStub * self,
 static GstCencDrmStatus
 gst_cenc_drm_stub_process_pssh_data (GstCencDRMStub * self, GstBuffer * data)
 {
+  if(self->parent.drm_type == GST_DRM_PLAYREADY) {
+    return gst_cenc_drm_stub_process_playready_pro_element (self,data);
+  }
   return GST_DRM_ERROR_NOT_IMPLEMENTED;
 }

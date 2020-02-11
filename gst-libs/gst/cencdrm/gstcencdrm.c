@@ -25,12 +25,16 @@
 
 #include "gstcencdrm.h"
 
-GST_DEBUG_CATEGORY_EXTERN (gst_cenc_decrypt_debug_category);
-#define GST_CAT_DEFAULT gst_cenc_decrypt_debug_category
+GST_DEBUG_CATEGORY_STATIC (gst_cenc_drm_debug_category);
+#define GST_CAT_DEFAULT gst_cenc_drm_debug_category
+
 
 #define gst_cenc_drm_parent_class parent_class
 
-static void gst_cenc_keypair_dispose (GObject * object);
+#define DASH_CENC_XML_NS ((const xmlChar *) "urn:mpeg:cenc:2013")
+#define DEFAULT_KID_NODE ((const xmlChar *) "default_KID")
+
+/*static void gst_cenc_keypair_dispose (GObject * object);*/
 /*static void gst_cenc_keypair_finalize (GObject * object); */
 
 static void gst_cenc_drm_dispose (GObject * object);
@@ -60,6 +64,9 @@ gst_cenc_drm_class_init (GstCencDRMClass * klass)
   klass->configure = gst_cenc_drm_configure;
   klass->add_kid = gst_cenc_drm_add_kid;
   klass->keypair_dispose = gst_cenc_drm_keypair_dispose;
+
+  GST_DEBUG_CATEGORY_INIT (gst_cenc_drm_debug_category, "cencdrm", 0,
+                           "DASH CENC library");
 }
 
 static void
@@ -79,6 +86,8 @@ gst_cenc_drm_clear (GstCencDRM * self)
     gst_buffer_unref (self->system_id);
     self->system_id = NULL;
   }
+  g_free (self->default_kid);
+  self->default_kid = NULL;
 }
 
 static void
@@ -97,6 +106,45 @@ gst_cenc_drm_finalize (GObject * object)
   /*  GstCencDRM *self = GST_CENC_DRM (object); */
 
   GST_CALL_PARENT (G_OBJECT_CLASS, finalize, (object));
+}
+
+static void
+gst_cenc_drm_hexdump_raw(GstCencDRM * self, const char* name,
+                     const guint8 * data, const gsize size)
+{
+  gsize i;
+
+  if (data==NULL){
+    GST_DEBUG_OBJECT (self, "%s: NULL", name);
+    return;
+  }
+  GST_DEBUG_OBJECT (self, "%s: length=%lu", name, size);
+
+  for(i=0; i<size; i++){
+    if ((i&0x1f)==0) {
+      g_print("%04lx: ", i);
+    }
+    g_print("%02x ", data[i]);
+    if ((i&0x1f)==0x1f) {
+      g_print("\n");
+    }
+  }
+  g_print("\n");
+}
+
+static void
+gst_cenc_drm_hexdump_buffer(GstCencDRM * self, const char* name,
+                            GstBuffer *buffer)
+{
+  GstMapInfo info;
+
+  if (buffer==NULL){
+    GST_DEBUG_OBJECT (self, "%s: NULL", name);
+    return;
+  }
+  gst_buffer_map (buffer, &info, GST_MAP_READ);
+  gst_cenc_drm_hexdump_raw(self, name, info.data, info.size);
+  gst_buffer_unmap (buffer, &info);
 }
 
 static GstCencDrmProcessing
@@ -146,7 +194,7 @@ gst_cenc_drm_buffer_from_raw_node (GstCencDRM * self, xmlNode * node)
 
   node_content = xmlNodeGetContent (node);
   if (node_content) {
-    bytes = g_bytes_new (node_content, strlen (node_content));
+    bytes = g_bytes_new (node_content, (gsize) strlen ( (const char *) node_content));
     buf = gst_buffer_new_wrapped_bytes (bytes);
     g_bytes_unref (bytes);
     xmlFree (node_content);
@@ -177,7 +225,21 @@ gst_cenc_drm_buffer_from_base64_node (GstCencDRM * self, xmlNode * node)
 static GstBuffer *
 gst_cenc_drm_buffer_from_hex_node (GstCencDRM * self, xmlNode * node)
 {
-  return NULL;
+  GBytes *bytes = NULL;
+  GstBuffer *buf;
+  xmlChar *node_content;
+
+  node_content = xmlNodeGetContent (node);
+  if (!node_content) {
+    return NULL;
+  }
+  bytes = gst_cenc_drm_hex_decode (self, (const gchar *) node_content);
+  xmlFree (node_content);
+  if (bytes) {
+    buf = gst_buffer_new_wrapped_bytes (bytes);
+    g_bytes_unref (bytes);
+  }
+  return buf;
 }
 
 static GstCencDrmStatus
@@ -243,12 +305,13 @@ gst_cenc_drm_parse_content_protection_xml_element (GstCencDRM * self,
     const gchar * system_id, GstBuffer * pssi)
 {
   GstMapInfo info;
-  guint32 data_size;
+  /*  guint32 data_size; */
   xmlDocPtr doc;
   xmlNode *root_element = NULL;
   GstCencDrmStatus ret = GST_DRM_NOT_FOUND;
-  xmlNode *node;
-  int i;
+  /*   xmlNode *node; */
+  xmlChar *default_kid = NULL;
+  /* int i; */
 
   gst_buffer_map (pssi, &info, GST_MAP_READ);
 
@@ -259,7 +322,7 @@ gst_cenc_drm_parse_content_protection_xml_element (GstCencDRM * self,
   LIBXML_TEST_VERSION;
 
   doc =
-      xmlReadMemory (info.data, info.size, "ContentProtection.xml", NULL,
+    xmlReadMemory ((const char *)info.data, info.size, "ContentProtection.xml", NULL,
       XML_PARSE_NONET);
   if (!doc) {
     ret = GST_DRM_ERROR_INVALID_MPD;
@@ -274,12 +337,21 @@ gst_cenc_drm_parse_content_protection_xml_element (GstCencDRM * self,
     ret = GST_DRM_ERROR_INVALID_MPD;
     goto beach;
   }
+  default_kid = xmlGetNsProp(root_element, DEFAULT_KID_NODE, DASH_CENC_XML_NS);
+  GST_DEBUG_OBJECT (self, "Default kid: %s",
+                    default_kid?(const gchar *)default_kid:"NULL");
+  if (default_kid && !self->default_kid) {
+    self->default_kid = g_strdup((const gchar *)default_kid);
+  }
+
   ret = gst_cenc_drm_walk_xml_nodes (self, root_element);
 
 beach:
-  gst_buffer_unmap (pssi, &info);
+  if (default_kid)
+    xmlFree (default_kid);
   if (doc)
     xmlFreeDoc (doc);
+  gst_buffer_unmap (pssi, &info);
   return ret;
 }
 
@@ -315,6 +387,8 @@ gst_cenc_drm_parse_pssh_box (GstCencDRM * self, GstBuffer * pssh)
 
   if (gst_buffer_memcmp (self->system_id, 0, system_id, SYSTEM_ID_LENGTH) != 0) {
     GST_DEBUG_OBJECT (self, "Skipping PSSH as not for this DRM system");
+    gst_cenc_drm_hexdump_raw(self, "got system_id", system_id, SYSTEM_ID_LENGTH);
+    gst_cenc_drm_hexdump_buffer(self, "self->system_id", self->system_id);
     ret = GST_DRM_OK;
     goto beach;
   }
@@ -399,42 +473,54 @@ gst_cenc_drm_keypair_dispose (GstCencDRM * self, GstCencKeyPair * key_pair)
 }
 
 GBytes *
-gst_cenc_drm_base64_decode (GstCencDRM * self, const gchar * encoded)
+gst_cenc_drm_hex_decode (GstCencDRM * self, const gchar * encoded)
 {
-  gint alloc_size;
-  gint padding = 0;
-  gint pos;
-  gpointer decoded;
-  gint decoded_len;
-  gsize encoded_len;
+  gint a;
+  size_t i, len;
+  gchar *decoded;
+  guint pos=0;
 
-  encoded_len = strlen (encoded);
+  g_return_val_if_fail (encoded != NULL, NULL);
 
-  /* For every 4 input bytes exactly 3 output bytes will be produced. The output
-     will be padded with 0 bits if necessary to ensure that the output is always
-     3 bytes for every 4 input bytes. */
-  alloc_size = 3 + encoded_len * 3 / 4;
-
-  /* EVP_DecodeBlock() includes the padding in its output length, therefore it
-     needs to be removed after decoding */
-  pos = encoded_len - 1;
-  while (pos && encoded[pos] == '=') {
-    padding++;
-    pos--;
-  }
-  decoded = g_malloc (alloc_size);
-  decoded_len =
-      EVP_DecodeBlock (decoded, (const unsigned char *) encoded, encoded_len);
-  if (decoded_len < 1) {
-    GST_ERROR_OBJECT (self, "Failed base64 decode");
-    g_free (decoded);
+  if ((len = strlen(encoded)) & 1) {
+    GST_ERROR_OBJECT (self,
+                      "A hex string should have an even number of characters");
     return NULL;
   }
-  g_assert_true (decoded_len <= alloc_size);
-  decoded_len -= padding;
-  if (decoded_len < alloc_size) {
-    decoded = g_realloc (decoded, decoded_len);
+
+  decoded = (gchar*) g_malloc(len >> 1);
+  for (i = 0; i < len; i ++) {
+    a = g_ascii_xdigit_value(encoded[i]);
+    if (a < 0) {
+      break;
+    }
+    if (i & 1) {
+      decoded[pos] |= a;
+      pos++;
+    } else {
+      decoded[pos] = a<<4;
+    }
   }
+  if (i < len)  {
+    free(decoded);
+    GST_ERROR_OBJECT (self, "Failed to parse hex string at position %ld", i);
+    return NULL;
+  }
+  return g_bytes_new_take (decoded, len);
+}
+
+GBytes *
+gst_cenc_drm_base64_decode (GstCencDRM * self, const gchar * encoded)
+{
+  gsize decoded_len = 0;
+  guchar *decoded;
+
+  decoded = g_base64_decode (encoded, &decoded_len);
+  if (decoded == NULL) {
+    GST_ERROR_OBJECT (self, "Failed base64 decode");
+    return NULL;
+  }
+
   return g_bytes_new_take (decoded, decoded_len);
 }
 
@@ -474,7 +560,7 @@ GBytes *
 gst_cenc_drm_base64url_decode (GstCencDRM * self, const gchar * data)
 {
   gchar *tmp;
-  guchar *decoded;
+  /*  guchar *decoded;*/
   gsize decoded_len = 0;
   guint data_size;
   guint padding;
@@ -513,24 +599,35 @@ gst_cenc_drm_urn_string_to_raw (GstCencDRM * self, const gchar * urn)
   GstBuffer *rv;
   GstMapInfo map;
   gboolean failed = FALSE;
-  guint i, pos, length;
+  guint i, pos=0, length;
 
-  if (!g_ascii_strncasecmp (prefix, urn, sizeof (prefix)) != 0) {
-    return NULL;
+  GST_DEBUG_OBJECT(self, "URN: %s", urn);
+  if (g_ascii_strncasecmp (prefix, urn, sizeof (prefix)) == 0) {
+    pos = sizeof(prefix);
   }
   length = strlen (urn);
   rv = gst_buffer_new_allocate (NULL, SYSTEM_ID_LENGTH, NULL);
-  gst_buffer_map (rv, &map, GST_MAP_READWRITE);
-  for (i = 0, pos = sizeof (prefix); i < SYSTEM_ID_LENGTH && pos < length; ++i) {
-    guint b;
+  if(!gst_buffer_map (rv, &map, GST_MAP_WRITE)) {
+    gst_buffer_unref (rv);
+    GST_ERROR_OBJECT(self,"Failed to map buffer");
+    return NULL;
+  }
+  for (i = 0; i < SYSTEM_ID_LENGTH && pos < length; ++i) {
     if (urn[pos] == '-') {
       pos++;
     }
-    if ((pos + 1) >= length || !sscanf (&urn[pos], "%02x", &b)) {
+    if ((pos + 1) >= length) {
+      GST_DEBUG_OBJECT(self, "pos %u > length %u", pos, length);
       failed = TRUE;
       break;
     }
-    map.data[i] = b;
+    if (!g_ascii_isxdigit (urn[pos]) || !g_ascii_isxdigit (urn[pos+1])) {
+      GST_DEBUG_OBJECT(self, "%d Not hex %c %c", pos, urn[pos], urn[pos+1]);
+      failed = TRUE;
+      break;
+    }
+    map.data[i] = (g_ascii_xdigit_value (urn[pos]) << 4) +
+      g_ascii_xdigit_value (urn[pos+1]);
     pos += 2;
   }
   gst_buffer_unmap (rv, &map);
@@ -538,5 +635,6 @@ gst_cenc_drm_urn_string_to_raw (GstCencDRM * self, const gchar * urn)
     gst_buffer_unref (rv);
     rv = NULL;
   }
+  gst_cenc_drm_hexdump_buffer(self, "decoded URN", rv);
   return rv;
 }

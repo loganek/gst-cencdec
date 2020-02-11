@@ -1,6 +1,6 @@
 This package provides an example GStreamer element that implements
-DASH Common Encryption (ISO/IEC23001-7 Information technology — MPEG 
-systems technologies — Part 7: Common encryption in ISO base media 
+DASH Common Encryption (ISO/IEC23001-7 Information technology — MPEG
+systems technologies — Part 7: Common encryption in ISO base media
 file format files).
 
 It takes video or audio (of type "application/x-cenc")
@@ -58,3 +58,5 @@ Clearkey example:
 or
 
     gst-launch-1.0 playbin uri='https://media.axprod.net/TestVectors/v7-MultiDRM-MultiKey/Manifest_AudioOnly_ClearKey.mpd'
+
+export GST_PLUGIN_PATH="$GST_PLUGIN_PATH:/home/alex/src/gst/master/gst-build/build/subprojects/gst-cencdec/gst/cencdec"

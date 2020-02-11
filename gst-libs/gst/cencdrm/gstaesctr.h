@@ -1,4 +1,3 @@
-
 /* GStreamer ISO MPEG-DASH common encryption decryption
  * Copyright (C) 2013 YouView TV Ltd. <alex.ashley@youview.com>
  *
@@ -24,17 +23,39 @@
 #include <glib.h>
 #include <gst/gst.h>
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 G_BEGIN_DECLS
+
+#ifndef GST_CENCDRM_API
+# ifdef BUILDING_GST_CENCDRM
+#  define GST_CENCDRM_API GST_API_EXPORT         /* from config.h */
+# else
+#  define GST_CENCDRM_API GST_API_IMPORT
+# endif
+#endif
 
 typedef struct _AesCtrState AesCtrState;
 
+GST_CENCDRM_API
 AesCtrState * gst_aes_ctr_decrypt_new(GBytes *key, GBytes *iv);
+
+GST_CENCDRM_API
 AesCtrState * gst_aes_ctr_decrypt_ref(AesCtrState *state);
+
+GST_CENCDRM_API
 void gst_aes_ctr_decrypt_unref(AesCtrState *state);
 
-void gst_aes_ctr_decrypt_ip(AesCtrState *state, 
-			    unsigned char *data,
-			    int length);
+GST_CENCDRM_API
+void gst_aes_ctr_decrypt_ip(AesCtrState *state,
+                            unsigned char *data,
+                            int length);
+
+GST_CENCDRM_API
+GType gst_aes_ctr_get_type (void);
 
 G_END_DECLS
-#endif
+
+#endif /* _GST_AES_CTR_DECRYPT_H_ */
